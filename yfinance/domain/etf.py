@@ -4,9 +4,11 @@ from ..data import YfData
 from ..data import utils
 from ..const import _QUERY1_URL_
 import json as _json
+import pandas as pd
 
 class Etf:
     def __init__(self, market:'str'=None,  session=None, proxy=None, timeout=30):
+        self._top_etf_url = f"{_QUERY1_URL_}/v1/finance/screener/predefined/saved"
         self.market = market
         self.session = session
         self.proxy = proxy
@@ -18,25 +20,46 @@ class Etf:
         
         self._status = None
         self._summary = None
+        self._top_etfs_meta = None
         self._top_etfs = None
 
     @property
     def top_etfs(self):
-        top_etf_url = f"{_QUERY1_URL_}/v1/finance/screener/predefined/saved"
+        if self._top_etfs is not None:
+            return self._top_etfs
+        self._fetch_top_etfs()
+        print(self._top_etfs)
+        return self._top_etfs
+    
+    def _fetch_top_etfs(self, start:int=0, count:int=250):
         top_etf_params = {
-            "formatted": "true", 
+            "formatted": "false", 
+            "useRecordsResponse": "true",
             "withReturns": "true", 
             "lang": "en-US", 
             "region": "US", 
-            "count": 25, 
+            "count": count, 
             "scrIds": "TOP_ETFS_US", 
-            "start": 0}
-        self._top_etfs = self._fetch_json(top_etf_url, top_etf_params)
-        print(self._top_etfs)
+            "start": start}
+        top_etfs_json = self._fetch_json(self._top_etf_url, top_etf_params)
+        if top_etfs_json['finance']['result'] is None:
+            print(top_etfs_json['finance']['error'])
+            return self._top_etfs
+        self._top_etfs_meta = top_etfs_json['finance']['result'][0]['criteriaMeta']
+        if self._top_etfs is None:
+            self._top_etfs = pd.DataFrame(top_etfs_json['finance']['result'][0]['records'])
+        else:
+            self._top_etfs = pd.concat([self._top_etfs, pd.DataFrame(top_etfs_json['finance']['result'][0]['records'])])
+
+        offset = self._top_etfs_meta['offset']
+        total = top_etfs_json['finance']['result'][0]['total']
+        if offset + count < total:
+            #print(f"Fetching {offset}+{count} of {total}")
+            self._fetch_top_etfs(start=offset + count, count=count)
         return self._top_etfs
 
     def _fetch_json(self, url, params):
-        data = self._data.cache_get(url=url, params=params, proxy=self.proxy, timeout=self.timeout)
+        data = self._data.get(url=url, params=params, proxy=self.proxy, timeout=self.timeout)
         if data is None or "Will be right back" in data.text:
             raise RuntimeError("*** YAHOO! FINANCE IS CURRENTLY DOWN! ***\n"
                                "Our engineers are working quickly to resolve "
